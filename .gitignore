@@ -1,4 +1,6 @@
 runs/
+state/
 __pycache__/
 *.pyc
 .venv/
+logs/
