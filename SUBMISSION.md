@@ -8,7 +8,7 @@
 - An hourly control loop. It ingests sim events into per-hour aggregates in SQLite, then for each workflow it runs (1) caller-ID health checks, (2) hallucination-incident detection with revert-to-last-good-prompt, and (3) one experiment type: an even-split test on the dimensions that move the workflow's **primary** KPI. Winners are picked by a one-sided two-proportion z-test with Holm correction and a guardrail check. It also detects decay and rolls back.
 - **public_01:** conclusion rate **+9.6%** vs baseline, 8 changes applied (4 beneficial, 4 neutral, **0 harmful**), decaying W3 rolled back.
 - **public_02:** **+12.2%**, 11 changes applied (10 beneficial, 1 neutral, **0 harmful**). The bad supervisor prompt was fixed with 3 credits. The flagged caller ID was drained by policy-sized auto-apply steps. Hallucinated calls on ks_cancel: 81 vs 330 baseline.
-- Crash test: SIGKILL mid-run on public_02, restart, correct finish, 0 apply conflicts, no double applies.
+- Crash test: SIGKILL mid-run on public_02, restart, identical final result to the uninterrupted run, 0 apply conflicts, no double applies. Load: 5 simulated days of public_03 in 441 s at 45 MB peak memory.
 - **Deliberately not built:** per-person call time (C4), supervisor UI (C11), per-cohort experiments (C2), loop observability dashboards (C14), cross-tenant fairness (C15).
 
 ## 1. Assumptions
@@ -142,12 +142,12 @@ Memory is now bounded by the aggregates (workflows × hours × config versions �
 **Plan:** shard workflows across worker processes (each with its own cursor and DB partition), use orjson, cache configs and refresh them on `config_changed`, and move to Postgres with per-workflow advisory locks for proposals.
 
 ## 9. Reliability
-- **Method:** `scripts/crash_test.sh <url> 60` SIGKILLs the controller about 60s into public_02 (killed at D2 09:00), restarts it, and lets it finish. Log: `reports/crash_test_public02.log`.
-- **Result:** finished at D10, `apply_conflicts: 0`, no double applies, no open proposals. The `--summary` audit prints "double-applied versions: none".
+- **Method:** `scripts/crash_test.sh <url> 50` SIGKILLs the controller about 50s into public_02 (killed at D2 02:00 sim time), restarts it, and lets it finish. Log: `reports/crash_test_public02.log`. Grade of that interrupted run: `reports/public_02_crash_run.md`.
+- **Result (final code):** finished at D10 with **exactly the same outcome as the uninterrupted run**: +12.2% conclusions, 11 applied (10 beneficial, 1 neutral, 0 harmful), `apply_conflicts: 0`, `lapsed: 0`. The audit summary prints "double-applied versions: none" and "still open: []".
 - **What's lost:** nothing durable. The aggregates of a chunk being processed are rolled back with its cursor and re-ingested.
 - **Idempotency keys:** chunk number (cursor), deterministic `proposal_id` written before sending, `approval_id` checked against config history before re-applying.
 - **4xx/5xx:** transport errors and 5xx are retried with exponential back-off. 4xx is interpreted (stale → re-plan, 410 → lapsed, duplicate → recover id, 403 → refused and logged).
-- **Caveat:** the crash test ran on the build just before the last two fixes. The fixes didn't touch the persistence path.
+- **Not yet tested:** a kill in the middle of a chunk download, or between `POST /apply` and our status update. The code handles both (whole-chunk retry, and config-history reconciliation), but the test only kills at one point.
 
 ## 10. Audit & observability
 ```
