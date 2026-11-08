@@ -1,6 +1,6 @@
 # Outcome-First Agent Loop — Submission
 
-**Name:** _(fill in)_ · **Date:** 2026-11-08 · **Hours actually spent (be honest):** _(fill in — built in one short time-boxed session with an AI coding assistant)_ · **Language / storage:** Python 3 (only `httpx` beyond the stdlib) / SQLite (one file, WAL mode)
+**Name:** Anushka Kulkarni · **Date:** 2026-11-08 · **Hours actually spent (be honest):** 3 hours (one session, with an AI coding assistant) · **Language / storage:** Python 3 (only `httpx` beyond the stdlib) / SQLite (one file, WAL mode)
 
 ---
 
