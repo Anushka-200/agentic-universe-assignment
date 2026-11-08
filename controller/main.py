@@ -32,7 +32,8 @@ DECAY_P, DECAY_MIN_DROP = 0.01, 0.03
 DID_MIN_DIALS, DID_P, DID_REL_DROP = 300, 0.001, 0.30
 HALLU_MIN_CONNECTED = 300
 VALIDATION_N = 300
-CREDIT_FLOOR = 20      # never spend below this; keeps money for the next incident
+CREDIT_FLOOR = 20
+SUPERVISOR_HOLD_H = 168  # hours we leave a supervisor-edited dimension alone      # never spend below this; keeps money for the next incident
 
 # Which knobs move which KPI: what a caller hears after pickup moves engagement; the number
 # they see before pickup moves pickup.
@@ -133,6 +134,10 @@ class Controller:
                      "experiment_reset": bool(touched)})
         if touched and exp["phase"] != "idle":
             self.set_exp(wf, {"phase": "idle"})
+        # respect the supervisor's choice: don't re-test the dims they just set for SUPERVISOR_HOLD_H hours
+        hold = self.db.get(f"hold:{wf}", {})
+        hold.update({d: self.hour + SUPERVISOR_HOLD_H for d in dims})
+        self.db.put(f"hold:{wf}", hold)
 
     # ---- experiment state (kv) -------------------------------------------------------------
     def exp(self, wf):
@@ -305,16 +310,22 @@ class Controller:
             return
         w, cur = self.wfs[wf], self.current(wf)
         cfg = copy.deepcopy(cur["config"])
-        dims = DIMS_FOR[w["objective"]["primary"]]
+        hold = self.db.get(f"hold:{wf}", {})
+        dims = [d for d in DIMS_FOR[w["objective"]["primary"]] if hold.get(d, -1) <= self.hour]
+        if not dims:
+            return
         bad = set(self.db.get(f"bad_did:{wf}", []))
         incumbent, diff = {}, {}
         for d in dims:
             old = cfg["allocations"]["default"].get(d, {})
-            incumbent[d] = max(old, key=old.get) if old else w["options"][d][0]
             opts = [o for o in w["options"][d] if not (d == "caller_id" and o in bad)]
+            live_old = {o: v for o, v in old.items() if o in opts}
+            incumbent[d] = max(live_old, key=live_old.get) if live_old else opts[0]
             cfg["allocations"]["default"][d] = {o: round(1 / len(opts), 6) for o in opts}
             diff[f"allocations.default.{d}"] = {"from": old, "to": cfg["allocations"]["default"][d]}
-        if cfg == cur["config"]:
+        old_alloc = cur["config"]["allocations"]["default"]
+        if all(tv_distance(old_alloc.get(d, {}), cfg["allocations"]["default"][d]) < 1e-6 for d in dims):
+            # already an even split (e.g. a supervisor edit reset us mid-test): just keep measuring
             self.set_exp(wf, {"phase": "exploring", "version": cur["version"], "start_hour": self.hour,
                               "incumbent": incumbent})
             return
@@ -333,14 +344,18 @@ class Controller:
         kpi = w["objective"]["primary"]
         guard_kpi, max_drop = next(iter(w["objective"]["guardrail"].items()))
         guard_kpi = guard_kpi.replace("_max_drop", "")
-        dims = DIMS_FOR[kpi]
-        pvals, arms, ready, capped = {}, {}, True, True
+        dims = list(exp["incumbent"])
+        bad = set(self.db.get(f"bad_did:{wf}", []))
+        pvals, arms, ready, capped, incs = {}, {}, True, True, {}
         for d in dims:
             st = self.db.arm_stats(wf, d, exp["start_hour"], exp["version"])
             arms[d] = st
-            inc = exp["incumbent"][d]
             alloc = self.current(wf)["config"]["allocations"]["default"].get(d, {})
-            live = [o for o, wgt in alloc.items() if wgt > 0]
+            live = [o for o, wgt in alloc.items() if wgt > 0 and not (d == "caller_id" and o in bad)]
+            inc = exp["incumbent"][d]
+            if inc not in live and live:  # incumbent was retired (e.g. bad caller ID): control = best live arm
+                inc = max(live, key=lambda o: (rate(kpi, st[o]) if o in st else 0, o))
+            incs[d] = inc
             ns = [metric(kpi, st[o])[1] if o in st else 0 for o in live]
             if not ns or min(ns) < MIN_N or inc not in st:
                 ready = False
@@ -356,7 +371,7 @@ class Controller:
         sig = holm({f"{d}:{o}": p for (d, o), p in pvals.items()}, ALPHA)
         winners, evidence = {}, {}
         for d in dims:
-            inc = exp["incumbent"][d]
+            inc = incs[d]
             cands = [o for o in arms[d] if f"{d}:{o}" in sig]
             # guardrail: the winner must not hurt the other KPI by more than the allowed drop
             ok = [o for o in cands if rate(guard_kpi, arms[d][inc]) - rate(guard_kpi, arms[d][o]) <= max_drop]
@@ -368,7 +383,7 @@ class Controller:
                                "p_vs_incumbent": round(pvals.get((d, o), 1.0), 6),
                                "significant_after_holm": f"{d}:{o}" in sig,
                                "guardrail_ok": o in ok or o == inc} for o, s in arms[d].items()}
-        found = any(winners[d]["opt"] != exp["incumbent"][d] for d in dims)
+        found = any(winners[d]["opt"] != incs[d] for d in dims)
         self.db.log(self.ts, wf, "evaluate_experiment", {"winners": winners, "evidence": evidence,
                                                          "decided": found or capped})
         if not (found or capped) or not self.can_request(wf):
@@ -380,7 +395,7 @@ class Controller:
             old = cfg["allocations"]["default"].get(d, {})
             cfg["allocations"]["default"][d] = {winners[d]["opt"]: 1.0}
             diff[f"allocations.default.{d}"] = {"from": old, "to": {winners[d]["opt"]: 1.0}}
-        lift = max(winners[d]["rate"] - rate(kpi, arms[d][exp["incumbent"][d]]) for d in dims)
+        lift = max(winners[d]["rate"] - rate(kpi, arms[d][incs[d]]) if incs[d] in arms[d] else 0 for d in dims)
         summ = ", ".join(f"{d}={winners[d]['opt']}" for d in dims)
         self.submit(wf, "promote", cfg,
                     summary=f"Promote test result to all traffic: {summ}" if found else
