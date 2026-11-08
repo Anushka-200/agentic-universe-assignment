@@ -14,7 +14,7 @@ END=$(date +%s)
   echo "public_03_load: total wall-clock $((END-START)) s for $(curl -s localhost:8703/sim/state | python -c 'import json,sys;print(json.load(sys.stdin)["end_minute"]//1440)') simulated days"
   grep -E "Maximum resident|Elapsed" logs/controller03.time
   echo "per-day completion timestamps (wall clock, sim day):"
-  grep "day done" logs/controller03.log | awk '{print "  "$1" "$2"  "$5}'
+  grep "day done" logs/controller03.time | awk '{print "  "$1" "$2"  "$5}'
   python - <<'PY'
 import sqlite3
 db = sqlite3.connect("state/p03.db")

@@ -1,0 +1,14 @@
+public_03_load: total wall-clock 441 s for 5 simulated days
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 7:20.52
+	Maximum resident set size (kbytes): 45860
+per-day completion timestamps (wall clock, sim day):
+events ingested (call rows aggregated): 7433295
+decisions logged: 345
+proposals: [('applied', 31), ('pending', 2), ('rejected', 5)]
+per-day completion (wall clock):
+  06:50:56,137  sim day
+  06:52:05,057  sim day
+  06:53:13,927  sim day
+  06:54:27,343  sim day
+  06:55:37,320  sim day
+before streaming fix (same run, chunk read whole): wall 558 s, peak RSS 4,965,108 kB

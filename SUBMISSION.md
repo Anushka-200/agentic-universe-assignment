@@ -122,10 +122,24 @@
   - D4 13:00: verified at 2.3%.
 
 ## 8. Scale
-See `reports/load_public03.txt` for measured numbers (wall-clock per simulated day, peak RSS, events ingested).
-Design notes: memory is bounded by aggregates (rows ∝ workflows × hours × versions × options), not by events. Per-event cost is one `json.loads` plus dict increments.
-**What breaks first at 10×:** single-threaded JSON parsing of chunks (about 8.5M events/day), then SQLite write contention if multiple processes share it.
-**Plan:** partition by workflow (each worker owns a set of workflows and its own cursor), use orjson, and move to Postgres with per-workflow advisory locks for proposals.
+Measured on `public_03_load` (12 workflows, 5 simulated days, **7.43M call events**) on this dev box (WSL2) with the simulator on the same machine. Command: `scripts/load_test.sh`. Raw output: `reports/load_public03.txt`.
+
+| metric | value |
+|---|---|
+| total wall-clock, 5 simulated days | **441 s** |
+| first simulated day, including ingesting 5.5M pre-D0 history events | ~160 s |
+| each later simulated day (~850k events) | **~70 s** (target was < 10 min) |
+| ingest throughput | ~17k events/s end to end, including sim response time |
+| peak controller memory (RSS) | **45 MB** |
+| decision lag | ≤ 1 simulated hour (the tick). Decisions run right after each hour's chunk is committed. |
+
+**Memory bug found and fixed:** the first load run read each chunk (250k events, ~80 MB) whole and peaked at **~5 GB RSS**. Streaming the chunk line by line brought it to 45 MB. A dropped stream retries the whole chunk with fresh tallies, so nothing is double-counted.
+
+Memory is now bounded by the aggregates (workflows × hours × config versions × options), not by events. Per event the cost is one `json.loads` plus 4 dict increments.
+
+**What breaks first at 10×** (~8.5M events/day, 120 workflows): single-threaded JSON parsing, at roughly 10 min per simulated day. That is at the SRE limit, with no headroom. Next would be the per-tick `GET /config` calls, which grow with the number of workflows.
+
+**Plan:** shard workflows across worker processes (each with its own cursor and DB partition), use orjson, cache configs and refresh them on `config_changed`, and move to Postgres with per-workflow advisory locks for proposals.
 
 ## 9. Reliability
 - **Method:** `scripts/crash_test.sh <url> 60` SIGKILLs the controller about 60s into public_02 (killed at D2 09:00), restarts it, and lets it finish. Log: `reports/crash_test_public02.log`.
@@ -199,7 +213,7 @@ Both were fixed (commit `6b369b2`). ks_cancel captured about 0% of the engagemen
 - The LLM-suggest path is coded but **not exercised** on public scenarios. Its response shape is assumed.
 - `CLIENT_PREFS` is keyed by workflow id, so on hidden scenarios with different ids it is simply inactive.
 - No metrics export or alerting (C14).
-- Load numbers: see §8. Only one load run was done.
+- Load: measured twice (before and after the streaming fix). Neither the load run nor the crash test was graded against a baseline.
 
 ## 14. If this went to production at Formi next month
 1. Move the store to Postgres with the same schema, one worker per workflow shard, and advisory locks on proposals.

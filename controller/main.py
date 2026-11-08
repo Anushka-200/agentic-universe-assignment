@@ -102,12 +102,28 @@ class Controller:
                 if ch["chunk"] > self.db.get("last_chunk", -1):
                     self.ingest(ch["chunk"])
 
+    def stream_events(self, n):
+        """Yield a chunk's events line by line so a 250k-event chunk never sits in memory whole."""
+        with self.http.stream("GET", f"/events/chunks/{n}") as r:
+            r.raise_for_status()
+            for line in r.iter_lines():
+                if line:
+                    yield json.loads(line)
+
     def ingest(self, n):
+        # retry the WHOLE chunk with fresh tallies, so a dropped stream can never double count
+        for attempt in range(6):
+            try:
+                return self._ingest(n)
+            except httpx.TransportError as e:
+                log.warning("chunk %s stream error: %s", n, e)
+                time.sleep(min(2 ** attempt, 30))
+        raise RuntimeError(f"chunk {n} failed after retries")
+
+    def _ingest(self, n):
         agg = defaultdict(lambda: [0, 0, 0, 0])
         cfg_events = []
-        text = self.call("GET", f"/events/chunks/{n}", raw=True).text
-        for line in text.splitlines():
-            ev = json.loads(line)
+        for ev in self.stream_events(n):
             t = ev["type"]
             if t == "call":
                 h = int((datetime.fromisoformat(ev["ts"]) - self.d0).total_seconds() // 3600)
