@@ -1,0 +1,4 @@
+[crash_test] sim state before kill: {"scenario":"public_02_incidents","sim_minute":3420,"ts":"2027-01-06T09:00:00+05:30","end_minute":14400,"finished":false,"tick_minutes":15,"credits_remaining":200.0,"chunks":28,"last_event_id":217989}
+[crash_test] SIGKILLed controller pid 20963; restarting
+[crash_test] restart exit code: 0
+[crash_test] sim state at end: {"scenario":"public_02_incidents","sim_minute":14400,"ts":"2027-01-14T00:00:00+05:30","end_minute":14400,"finished":true,"tick_minutes":15,"credits_remaining":197.0,"chunks":131,"last_event_id":324330}
