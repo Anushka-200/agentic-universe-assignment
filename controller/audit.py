@@ -52,7 +52,7 @@ def main():
             print(f"    {d['sim_ts']}  {d['kind']}: {d['detail'][:220]}")
         print("  WHAT HAPPENED NEXT (next 48 sim-hours on this workflow):")
         for d in db.execute("""SELECT sim_ts, kind, detail FROM decisions WHERE wf=? AND sim_ts>? AND
-                               sim_ts<=datetime(?, '+2 days') AND kind NOT IN (%s) ORDER BY id LIMIT 12"""
+                               sim_ts<=replace(datetime(?, '+2 days'), ' ', 'T') AND kind NOT IN (%s) ORDER BY id LIMIT 12"""
                             % ",".join("?" * len(NOISY)),
                             (p["wf"], p["updated_ts"], p["updated_ts"][:19], *NOISY)):
             print(f"    {d['sim_ts']}  {d['kind']}: {d['detail'][:160]}")
